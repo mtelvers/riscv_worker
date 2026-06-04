@@ -1,0 +1,7 @@
+*.qcow2
+*.img
+seed-*.iso
+user-data-*.yaml
+*.log
+*-console.log
+secrets/
