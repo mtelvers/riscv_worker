@@ -52,11 +52,27 @@ if [ -n "$PIN_CORES" ]; then
     USE_PIN=1
     declare -A _allowed=()
     for c in $(expand_list "$PIN_CORES"); do _allowed[$c]=1; done
+    # Exclude cores already pinned by running workers, so re-running this script
+    # to add workers does not double-assign cores held by existing ones.
+    declare -A _used=()
+    for qpid in $(pgrep -x qemu-system-ris 2>/dev/null); do
+        for t in /proc/"$qpid"/task/*; do
+            c=$(cat "$t/comm" 2>/dev/null) || continue
+            case "$c" in
+                "CPU "*"/TCG"|"CPU "*"/KVM")
+                    aff=$(taskset -pc "${t##*/}" 2>/dev/null | sed -E 's/.*list:[[:space:]]*//')
+                    for u in $(expand_list "$aff"); do _used[$u]=1; done
+                    ;;
+            esac
+        done
+    done
     for nd in /sys/devices/system/node/node[0-9]*; do
         [ -e "$nd/cpulist" ] || continue
         node=${nd##*/node}
         list=""
-        for c in $(expand_list "$(cat "$nd/cpulist")"); do [ -n "${_allowed[$c]:-}" ] && list+="$c "; done
+        for c in $(expand_list "$(cat "$nd/cpulist")"); do
+            [ -n "${_allowed[$c]:-}" ] && [ -z "${_used[$c]:-}" ] && list+="$c "
+        done
         if [ -n "$list" ]; then NODE_AVAIL[$node]="$list"; NODE_IDS+=("$node"); fi
     done
     command -v numactl >/dev/null || echo "WARNING: numactl not found (make deps) - RAM will not be node-bound"
