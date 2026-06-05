@@ -120,11 +120,6 @@ pin_worker_vcpus() {
 start_vm() {
     local name=$1 ssh_port=$2 vnc_display=$3
 
-    if pgrep -f "system-riscv64.*${name}\.qcow2" >/dev/null 2>&1; then
-        echo "${name}: already running"
-        return
-    fi
-
     local numa=""
     declare -a cores=()
     if [ "$USE_PIN" = 1 ]; then
@@ -153,13 +148,33 @@ start_vm() {
     [ "${#cores[@]}" -gt 0 ] && pin_worker_vcpus "$pid" "${cores[@]}"
 }
 
-idx=0
+# SSH ports / VNC displays already used by running workers, so re-running this
+# script to add workers does not collide with the ports/displays of existing ones.
+declare -A _uport=() _uvnc=()
+for qpid in $(pgrep -x qemu-system-ris 2>/dev/null); do
+    cl=$(tr '\0' ' ' < /proc/"$qpid"/cmdline 2>/dev/null)
+    p=$(grep -oE 'hostfwd=tcp::[0-9]+-' <<<"$cl" | grep -oE '[0-9]+'); [ -n "$p" ] && _uport[$p]=1
+    v=$(grep -oE '\-vnc :[0-9]+' <<<"$cl" | grep -oE '[0-9]+$'); [ -n "$v" ] && _uvnc[$v]=1
+done
+# Set PORT / VNC to the next free value. Called directly (not via $(...)), so the
+# bookkeeping in _uport/_uvnc persists across workers in this same shell.
+_next_port=60022; _next_vnc=0; PORT=0; VNC=0
+alloc_port() { while [ -n "${_uport[$_next_port]:-}" ]; do _next_port=$((_next_port + 1)); done; _uport[$_next_port]=1; PORT=$_next_port; }
+alloc_vnc()  { while [ -n "${_uvnc[$_next_vnc]:-}" ];  do _next_vnc=$((_next_vnc + 1));   done; _uvnc[$_next_vnc]=1;  VNC=$_next_vnc; }
+
 shopt -s nullglob
-for root in *.qcow2; do
-    case "$root" in *-docker.qcow2|*-obuilder.qcow2) continue ;; esac
+# Discover root disks, numerically sorted (so navajo-2 precedes navajo-10).
+mapfile -t _roots < <(for f in *.qcow2; do case "$f" in *-docker.qcow2|*-obuilder.qcow2) ;; *) echo "$f" ;; esac; done | sort -V)
+started=0
+for root in "${_roots[@]}"; do
     name=${root%.qcow2}
     [ -f "${name}-docker.qcow2" ] && [ -f "${name}-obuilder.qcow2" ] || continue
-    start_vm "$name" $((60022 + idx)) "$idx"
-    idx=$((idx + 1))
+    if pgrep -f "system-riscv64.*${name}\.qcow2" >/dev/null 2>&1; then
+        echo "${name}: already running"
+        continue
+    fi
+    alloc_port; alloc_vnc
+    start_vm "$name" "$PORT" "$VNC"
+    started=$((started + 1))
 done
-[ "$idx" -eq 0 ] && echo "no built worker images found in $(pwd)"
+[ "${#_roots[@]}" -eq 0 ] && echo "no built worker images found in $(pwd)"
