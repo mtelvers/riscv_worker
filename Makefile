@@ -14,9 +14,9 @@
 NAME        ?= riscv-qemu-01
 # RELEASE is the Ubuntu codename: resolute = 26.04 LTS (Resolute Raccoon).
 RELEASE     ?= resolute
-ROOT_SIZE   ?= 40G
-DOCKER_SIZE ?= 60G
-STORE_SIZE  ?= 100G
+ROOT_SIZE   ?= 50G
+DOCKER_SIZE ?= 50G
+STORE_SIZE  ?= 50G
 MEM         ?= 16G
 SMP         ?= 8
 

@@ -21,9 +21,14 @@ Each worker is a set of three disks (`make NAME=<name>` produces them):
 
 | Disk | Mount | FS | Purpose |
 |------|-------|----|---------|
-| `<name>.qcow2` | `/` | ext4 | root (Ubuntu 26.04 cloud image, grown to 40G) |
-| `<name>-docker.qcow2` | `/var/lib/docker` | ext4 | docker data-root (60G) |
-| `<name>-obuilder.qcow2` | `/var/cache/obuilder` | btrfs | obuilder store (100G) |
+| `<name>.qcow2` | `/` | ext4 | root (Ubuntu 26.04 cloud image, grown to 50G) |
+| `<name>-docker.qcow2` | `/var/lib/docker` | ext4 | docker data-root (50G) |
+| `<name>-obuilder.qcow2` | `/var/cache/obuilder` | btrfs | obuilder store (50G) |
+
+Disks are thin qcow2, so virtual size is a ceiling, not consumption. The
+obuilder btrfs store is the only real grower; `--obuilder-prune-threshold=30`
+keeps it ~30% free, so a 50G store caps steady-state usage around 35G. Keep the
+sum of all workers' stores comfortably under the host volume.
 
 ## One-time setup (per host)
 
