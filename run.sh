@@ -25,8 +25,8 @@
 
 set -e
 
-MEM=${MEM:-16G}
-SMP=${SMP:-8}
+MEM=${MEM:-12G}
+SMP=${SMP:-4}
 QEMU=${QEMU:-qemu-system-riscv64}   # resolves to the QEMU 11 build in /usr/local via PATH
 PIN_CORES=${PIN_CORES:-}            # e.g. "4-63,68-127"; empty = no pinning / no NUMA bind
 

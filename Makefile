@@ -17,8 +17,11 @@ RELEASE     ?= resolute
 ROOT_SIZE   ?= 50G
 DOCKER_SIZE ?= 50G
 STORE_SIZE  ?= 50G
-MEM         ?= 16G
-SMP         ?= 8
+# Emulated build steps rarely use more than ~4 vCPUs, and the guest uses ~1G of
+# real RAM (the rest is reclaimable page cache), so small workers pack densely
+# without hurting per-build time. Bump per-host with SMP=/MEM= if you run few.
+MEM         ?= 12G
+SMP         ?= 4
 
 # Ubuntu 26.04 (resolute) requires the RVA23 profile (-cpu rva23s64), which the
 # distro QEMU 8.2 does not provide. `make qemu` builds QEMU 11 into /usr/local;
