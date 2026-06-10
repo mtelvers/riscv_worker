@@ -153,8 +153,8 @@ start_vm() {
 declare -A _uport=() _uvnc=()
 for qpid in $(pgrep -x qemu-system-ris 2>/dev/null); do
     cl=$(tr '\0' ' ' < /proc/"$qpid"/cmdline 2>/dev/null)
-    p=$(grep -oE 'hostfwd=tcp::[0-9]+-' <<<"$cl" | grep -oE '[0-9]+'); [ -n "$p" ] && _uport[$p]=1
-    v=$(grep -oE '\-vnc :[0-9]+' <<<"$cl" | grep -oE '[0-9]+$'); [ -n "$v" ] && _uvnc[$v]=1
+    p=$(grep -oE 'hostfwd=tcp::[0-9]+-' <<<"$cl" | grep -oE '[0-9]+' || true); [ -n "$p" ] && _uport[$p]=1
+    v=$(grep -oE '\-vnc :[0-9]+' <<<"$cl" | grep -oE '[0-9]+$' || true); [ -n "$v" ] && _uvnc[$v]=1
 done
 # Set PORT / VNC to the next free value. Called directly (not via $(...)), so the
 # bookkeeping in _uport/_uvnc persists across workers in this same shell.
