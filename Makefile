@@ -38,7 +38,7 @@ POOL_CAP    ?= $(shell cat $(CAP_FILE) 2>/dev/null)
 
 BASE_IMG    := $(RELEASE)-server-cloudimg-riscv64.img
 
-.PHONY: all clean deps qemu
+.PHONY: all base clean deps qemu
 
 all: $(NAME).qcow2
 
@@ -66,6 +66,31 @@ seed-$(NAME).iso: user-data.yaml.m4
 	m4 -D __NAME__=$(NAME) -D __CAP__="$(POOL_CAP)" $< > user-data-$(NAME).yaml
 	cloud-localds $@ user-data-$(NAME).yaml
 
+# Build the shared, generic base image (no per-worker identity): boot once to
+# install everything, then power off; keep only base.qcow2 (the root). Per-worker
+# roots are thin overlays on it (new-worker.sh), so the slow bake happens ONCE
+# and each worker is then created in seconds with much less disk.
+base: $(BASE_IMG) seed-base.iso
+	@test -n "$(POOL_CAP)" || { echo "ERROR: POOL_CAP is empty - is $(CAP_FILE) present (or pass POOL_CAP=...)?"; exit 1; }
+	qemu-img convert -O qcow2 $(BASE_IMG) base.qcow2
+	qemu-img resize base.qcow2 $(ROOT_SIZE)
+	qemu-img create -f qcow2 base-docker.qcow2 $(DOCKER_SIZE)
+	qemu-img create -f qcow2 base-obuilder.qcow2 $(STORE_SIZE)
+	$(QEMU) -cpu rva23s64 -m $(MEM) -smp $(SMP) -machine virt,acpi=off -nographic \
+		-kernel /usr/lib/u-boot/qemu-riscv64_smode/uboot.elf \
+		-drive file=base.qcow2,if=virtio \
+		-drive file=base-docker.qcow2,if=virtio \
+		-drive file=base-obuilder.qcow2,if=virtio \
+		-drive file=seed-base.iso,format=raw,if=virtio \
+		-device virtio-rng-pci \
+		-netdev user,id=net0 -device virtio-net-device,netdev=net0
+	rm -f base-docker.qcow2 base-obuilder.qcow2 seed-base.iso user-data-base.yaml
+	@echo "base.qcow2 ready - create workers with: ./new-worker.sh <name>"
+
+seed-base.iso: user-data-base.yaml.m4
+	m4 -D __CAP__="$(POOL_CAP)" $< > user-data-base.yaml
+	cloud-localds $@ user-data-base.yaml
+
 $(BASE_IMG):
 	curl -C - -L https://cloud-images.ubuntu.com/$(RELEASE)/current/$@ -o $@
 
@@ -75,7 +100,7 @@ $(BASE_IMG):
 # capability in directly: make NAME=... POOL_CAP=...
 deps:
 	sudo apt-get update
-	sudo DEBIAN_FRONTEND=noninteractive apt-get install -y m4 cloud-image-utils qemu-utils u-boot-qemu numactl
+	sudo DEBIAN_FRONTEND=noninteractive apt-get install -y m4 cloud-image-utils qemu-utils u-boot-qemu numactl btrfs-progs
 
 # Build and install QEMU $(QEMU_VERSION) (riscv64 target only) into /usr/local,
 # for -cpu rva23s64. Needed on every host that builds or runs these VMs.

@@ -5,11 +5,14 @@ non-riscv hardware (x86_64 / arm64 / ppc64le). Each VM is a self-contained,
 fully-baked worker: it boots, mounts its disks, connects to its OCluster pool,
 and starts taking jobs.
 
-A single `make` produces the image in one cloud-init pass that installs Docker,
-fetches the `ocluster-worker` binary, bakes in the pool capability, enables the
-service, and powers off. There is no separate provisioning step. It is handy for
-adding RISC-V CI capacity (or running any riscv64 workload) on whatever spare
-x86_64, arm64, or ppc64le machines you have.
+A one-time `make base` produces a shared base image in a single cloud-init pass
+that installs Docker, fetches the `ocluster-worker` binary, bakes in the pool
+capability, enables the service, and powers off. Each worker is then created in
+seconds as a thin copy-on-write overlay on that base (`./new-worker.sh <name>`),
+so the slow emulated install happens once and every worker after it costs only
+its own writes. There is no separate provisioning step. It is handy for adding
+RISC-V CI capacity (or running any riscv64 workload) on whatever spare x86_64,
+arm64, or ppc64le machines you have.
 
 > **Emulation note:** there is no KVM for riscv64 on these hosts, so the guests
 > run under pure TCG emulation, well below native riscv speed. The model is to
@@ -17,13 +20,17 @@ x86_64, arm64, or ppc64le machines you have.
 
 ## Layout
 
-Each worker is a set of three disks (`make NAME=<name>` produces them):
+Each worker is a set of three disks (`./new-worker.sh <name>` produces them):
 
 | Disk | Mount | FS | Purpose |
 |------|-------|----|---------|
-| `<name>.qcow2` | `/` | ext4 | root (Ubuntu 26.04 cloud image, grown to 50G) |
+| `<name>.qcow2` | `/` | ext4 | root, a copy-on-write overlay on `base.qcow2` |
 | `<name>-docker.qcow2` | `/var/lib/docker` | ext4 | docker data-root (50G) |
 | `<name>-obuilder.qcow2` | `/var/cache/obuilder` | btrfs | obuilder store (50G) |
+
+The root is an overlay, so a fresh worker's `<name>.qcow2` is only tens of MB
+(its writes over the shared `base.qcow2`) rather than a full ~17G copy of the
+base. The data disks are private to each worker.
 
 Disks are thin qcow2, so virtual size is a ceiling, not consumption. The
 obuilder btrfs store is the only real grower; `--obuilder-prune-threshold=30`
@@ -54,29 +61,52 @@ echo '<capnp://...linux-riscv64 pool cap...>' > secrets/linux-riscv64.cap
 
 ## Build
 
+Build the shared base image once, then create each worker as an overlay:
+
+```sh
+make base                       # one-time, slow (emulated install)
+./new-worker.sh riscv-qemu-<host>-1   # seconds, repeat per worker
+./new-worker.sh riscv-qemu-<host>-2
+```
+
+`make base` downloads the `resolute` (26.04) riscv64 cloud image and boots it
+once with a cloud-init seed that:
+
+1. installs docker and the worker-role dependencies,
+2. pulls `ocurrent/ocluster-worker:live` and extracts the `ocluster-worker` binary,
+3. bakes `/etc/ocluster/pool.cap` (from `secrets/linux-riscv64.cap` or `POOL_CAP=...`),
+4. installs and **enables** (does not start) `ocluster-worker.service`,
+5. powers off.
+
+It keeps only `base.qcow2` (the throwaway data disks are discarded). The slow
+step is the emulated apt/docker pull, roughly a couple of hours cold, dominated
+by the base-image pull. It runs once per host.
+
+`./new-worker.sh <name>` then creates a worker from that base without booting it:
+a copy-on-write overlay root, fresh labelled docker (ext4) and obuilder (btrfs)
+disks, and the worker's identity (`/etc/hostname`) written into the overlay. The
+worker name is not baked into the base; the systemd unit takes `--name` from the
+hostname at runtime (`%H`), so one base serves every worker. The next `run.sh`
+boot brings up a live worker.
+
+### Fully-baked single worker (alternative)
+
+To build a single self-contained worker with no shared base (hostname and
+`--name` baked into its own root), use the per-worker target instead:
+
 ```sh
 make NAME=riscv-qemu-<host>-1
 ```
 
-The build downloads the `resolute` (26.04) riscv64 cloud image, creates the
-three disks, then boots once with a cloud-init seed that:
-
-1. formats + mounts the docker and obuilder disks,
-2. installs docker and the worker-role dependencies,
-3. pulls `ocurrent/ocluster-worker:live` and extracts the `ocluster-worker` binary,
-4. bakes `/etc/ocluster/pool.cap` (from `secrets/linux-riscv64.cap` or `POOL_CAP=...`),
-5. installs and **enables** (does not start) `ocluster-worker.service`,
-6. powers off.
-
-The next boot brings up a live worker. Build once **per worker**, since the
-hostname and `--name` are baked in. The slow step is the emulated apt/docker
-pull (roughly a couple of hours cold, dominated by the base-image pull).
+This is the same install, but the identity is baked in and the root is a full
+image rather than an overlay. Prefer `make base` + `new-worker.sh` when running
+more than one worker on a host.
 
 ## Run
 
-`run.sh` auto-discovers every built worker in the directory and starts it,
-assigning an SSH-forward port (`60022+`) and VNC display (`:0+`) by index, with
-no editing needed:
+`run.sh` auto-discovers every built worker in the directory and starts any that
+are not already running, assigning each the next free SSH-forward port
+(`60022+`) and VNC display (`:0+`), with no editing needed:
 
 ```sh
 ./run.sh
