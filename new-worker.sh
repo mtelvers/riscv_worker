@@ -14,7 +14,10 @@ cd "$(dirname "$0")"
 [ -f base.qcow2 ] || { echo "no base.qcow2 - run 'make base' first"; exit 1; }
 [ -e "${name}.qcow2" ] && { echo "${name}.qcow2 already exists"; exit 1; }
 
-qemu-img create -f qcow2 -b base.qcow2 -F qcow2 "${name}.qcow2" "$size" >/dev/null
+# Root overlay inherits base.qcow2's virtual size (no size arg): an overlay
+# smaller than its backing makes base's GPT/partitions overrun the device, so
+# no partition table is found. The data disks take the requested size.
+qemu-img create -f qcow2 -b base.qcow2 -F qcow2 "${name}.qcow2" >/dev/null
 qemu-img create -f qcow2 "${name}-docker.qcow2" "$size" >/dev/null
 qemu-img create -f qcow2 "${name}-obuilder.qcow2" "$size" >/dev/null
 
@@ -49,13 +52,21 @@ mkfs.ext4 -F -L docker "$ND" >/dev/null
 
 # overlay root: set hostname (worker --name follows it via systemd %H)
 nbd_connect "${name}.qcow2"
-partprobe "$ND" 2>/dev/null || true; sleep 1
+# Trigger ONE partition rescan, then wait for the nodes to appear. Do NOT
+# re-run partprobe in the loop: each call tears down and recreates the
+# partition nodes, and under heavy host load udev takes >1s to recreate them,
+# so a re-probing loop keeps missing the window and never finds a partition.
+partprobe "$ND" 2>/dev/null || true
 root=""
-for part in "$ND"p*; do
-    [ -b "$part" ] || continue
-    mount "$part" "$mp" 2>/dev/null || continue
-    if [ -f "$mp/etc/os-release" ]; then root="$part"; break; fi
-    umount "$mp"
+for try in $(seq 1 60); do
+    udevadm settle >/dev/null 2>&1 || true
+    for part in "$ND"p*; do
+        [ -b "$part" ] || continue
+        mount "$part" "$mp" 2>/dev/null || continue
+        if [ -f "$mp/etc/os-release" ]; then root="$part"; break 2; fi
+        umount "$mp"
+    done
+    sleep 0.5
 done
 [ -n "$root" ] || { echo "ERROR: no root partition found in ${name}.qcow2"; exit 1; }
 echo "$name" > "$mp/etc/hostname"
