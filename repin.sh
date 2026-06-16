@@ -9,15 +9,10 @@ set -e
 name=$1
 [ -n "$name" ] || { echo "usage: $0 <worker-name>"; exit 1; }
 cd "$(dirname "$0")"
+. "$(dirname "$0")/lib-stopvm.sh"
 
-pid=$(pgrep -f "file=${name}.qcow2,if=virtio" || true)
-if [ -n "$pid" ]; then
-    echo "stopping ${name} (pid ${pid})"
-    kill "$pid" 2>/dev/null || true
-    for _ in $(seq 1 60); do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
-    kill -9 "$pid" 2>/dev/null || true
-    sleep 2
-fi
+# Clean guest poweroff (avoids corrupting docker/BuildKit), then run.sh relaunches.
+stop_vm "$name"
 
 # run.sh re-launches any stopped worker at the current SMP/MEM, pinned to free cores.
 setsid bash -c "PIN_CORES='${PIN_CORES:-}' ./run.sh" </dev/null >>repin.out 2>&1

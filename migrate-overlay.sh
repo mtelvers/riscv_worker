@@ -15,6 +15,7 @@ set -e
 name=$1
 [ -n "$name" ] || { echo "usage: $0 <worker-name>"; exit 1; }
 cd "$(dirname "$0")"
+. "$(dirname "$0")/lib-stopvm.sh"
 [ -f base.qcow2 ] || { echo "no base.qcow2 - run 'make base' first"; exit 1; }
 [ -f "${name}.qcow2" ] || { echo "no such worker: ${name}.qcow2"; exit 1; }
 [ -f "${name}-docker.qcow2" ] && [ -f "${name}-obuilder.qcow2" ] \
@@ -25,15 +26,8 @@ if qemu-img info "${name}.qcow2" 2>/dev/null | grep -q "backing file:.*base.qcow
     echo "${name}: already an overlay on base.qcow2 - skipping"; exit 0
 fi
 
-# Stop the VM. The ".qcow2," boundary stops navajo-1 matching navajo-10/11.
-pid=$(pgrep -f "file=${name}.qcow2,if=virtio" || true)
-if [ -n "$pid" ]; then
-    echo "stopping ${name} (pid ${pid})"
-    kill "$pid" 2>/dev/null || true
-    for _ in $(seq 1 90); do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
-    kill -9 "$pid" 2>/dev/null || true
-    sleep 2
-fi
+# Stop the VM cleanly (clean guest poweroff avoids corrupting docker/BuildKit).
+stop_vm "$name"
 
 # Swap the full root for an overlay. Keep the old root aside until the overlay
 # is built and its identity is written, so a failure cannot lose the worker.
