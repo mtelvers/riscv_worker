@@ -135,9 +135,9 @@ start_vm() {
     nohup ${numa} ${QEMU} -cpu rva23s64 -m ${MEM} -smp ${SMP} -machine virt,acpi=off \
         -kernel /usr/lib/u-boot/qemu-riscv64_smode/uboot.elf \
         -display none -vnc :${vnc_display} -serial file:${name}-console.log \
-        -drive file=${name}.qcow2,if=virtio \
-        -drive file=${name}-docker.qcow2,if=virtio \
-        -drive file=${name}-obuilder.qcow2,if=virtio \
+        -drive file=${name}.qcow2,if=virtio,discard=unmap \
+        -drive file=${name}-docker.qcow2,if=virtio,discard=unmap \
+        -drive file=${name}-obuilder.qcow2,if=virtio,discard=unmap \
         -device virtio-rng-pci \
         -netdev user,id=net0,hostfwd=tcp::${ssh_port}-:22 \
         -device virtio-net-device,netdev=net0 \

@@ -29,7 +29,17 @@ write_files:
   - path: /etc/default/prometheus-node-exporter
     permissions: '0644'
     content: |
-      ARGS="--collector.filesystem.ignored-mount-points=^/(sys|proc|dev|run|var/cache/obuilder/.+|var/lib/docker/.+)($|/)"
+      ARGS="--collector.filesystem.ignored-mount-points=^/(sys|proc|dev|run|var/cache/obuilder/.+|var/lib/docker/.+|var/lib/containerd/.+)($|/)"
+  - path: /etc/systemd/system/containerd.service.d/10-data-mount.conf
+    permissions: '0644'
+    content: |
+      [Unit]
+      # containerd's root is /var/lib/containerd, which we bind-mount onto the
+      # docker data disk (see fstab) so all of docker+containerd's data lives on
+      # one disk - the filesystem ocluster's --prune-threshold watches. Wait for
+      # that mount, or containerd races on boot and writes to the root overlay
+      # before the bind is up, silently recreating the split.
+      RequiresMountsFor=/var/lib/containerd
   - path: /etc/sysctl.d/99-ocluster.conf
     permissions: '0644'
     content: |
@@ -57,12 +67,21 @@ write_files:
 runcmd:
   # Format the (throwaway) build-time data disks so docker can install; per-worker
   # overlays get their own labelled disks from new-worker.sh, mounted by fstab.
+  # docker (/var/lib/docker) and containerd (/var/lib/containerd) share ONE disk:
+  # the disk mounts at /var/lib/docker and is bind-mounted onto /var/lib/containerd.
+  # They use disjoint top-level names (docker: image/ overlay2/ volumes/ ...;
+  # containerd: io.containerd.*), so co-locating them is safe, and it puts
+  # containerd's data on the filesystem ocluster's docker prune monitors.
+  # discard (+ discard=unmap drives in run.sh, + fstrim.timer) lets the qcow2
+  # shrink when prune frees space, instead of ratcheting to high-water.
   - mkfs.ext4 -F -L docker /dev/vdb
   - mkfs.btrfs -f -L obuilder /dev/vdc
-  - mkdir -p /var/lib/docker /var/cache/obuilder
-  - echo 'LABEL=docker /var/lib/docker ext4 defaults 0 2' >> /etc/fstab
-  - echo 'LABEL=obuilder /var/cache/obuilder btrfs defaults 0 2' >> /etc/fstab
+  - mkdir -p /var/lib/docker /var/lib/containerd /var/cache/obuilder
+  - echo 'LABEL=docker /var/lib/docker ext4 defaults,discard 0 2' >> /etc/fstab
+  - echo '/var/lib/docker /var/lib/containerd none bind 0 0' >> /etc/fstab
+  - echo 'LABEL=obuilder /var/cache/obuilder btrfs defaults,discard=async 0 2' >> /etc/fstab
   - mount -a
+  - systemctl enable fstrim.timer
   - apt-get update
   - DEBIAN_FRONTEND=noninteractive apt-get -y purge exim4-daemon-light snapd apport mlocate || true
   - DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-recommends install docker.io docker-buildx docker-compose-v2 pass gnupg2 libev4 git libsqlite3-0 ca-certificates netbase prometheus-node-exporter
