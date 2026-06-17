@@ -25,17 +25,28 @@ Each worker is a set of three disks (`./new-worker.sh <name>` produces them):
 | Disk | Mount | FS | Purpose |
 |------|-------|----|---------|
 | `<name>.qcow2` | `/` | ext4 | root, a copy-on-write overlay on `base.qcow2` |
-| `<name>-docker.qcow2` | `/var/lib/docker` | ext4 | docker data-root (50G) |
+| `<name>-docker.qcow2` | `/var/lib/docker` + `/var/lib/containerd` | ext4 | docker **and** containerd data (50G) |
 | `<name>-obuilder.qcow2` | `/var/cache/obuilder` | btrfs | obuilder store (50G) |
 
 The root is an overlay, so a fresh worker's `<name>.qcow2` is only tens of MB
 (its writes over the shared `base.qcow2`) rather than a full ~17G copy of the
 base. The data disks are private to each worker.
 
-Disks are thin qcow2, so virtual size is a ceiling, not consumption. The
-obuilder btrfs store is the only real grower; `--obuilder-prune-threshold=30`
-keeps it ~30% free, so a 50G store caps steady-state usage around 35G. Keep the
-sum of all workers' stores comfortably under the host volume.
+The docker disk is bind-mounted onto **both** `/var/lib/docker` and
+`/var/lib/containerd`. Docker 29 keeps the bulk of its data (images, snapshots,
+BuildKit cache) under `/var/lib/containerd` via the system containerd, not
+`/var/lib/docker`. Putting both on the one disk keeps that data off the root
+overlay **and** on the filesystem ocluster's `--prune-threshold` watches, so the
+docker prune actually fires on it. (docker's and containerd's top-level dir
+names are disjoint, so sharing a directory is safe.)
+
+Disks are thin qcow2 with `discard=unmap`, and the guest mounts use
+`discard`/`discard=async` plus `fstrim.timer`, so freed space is returned to the
+host instead of ratcheting to high-water. The obuilder btrfs store is the main
+grower; `--obuilder-prune-threshold=30` keeps it ~30% free, capping a 50G store
+around 35G. Budget ~50G per worker (obuilder + docker/containerd + root) and keep
+the sum of all workers comfortably under the host volume — e.g. ~24 workers on a
+1.5T volume, not 30.
 
 ## One-time setup (per host)
 
