@@ -57,7 +57,12 @@ write_files:
       [Service]
       # %H = hostname; each overlay sets its own /etc/hostname, so the worker
       # name follows the VM without rebuilding the base image.
-      ExecStart=/usr/local/bin/ocluster-worker -c /etc/ocluster/pool.cap --name=%H --obuilder-store=btrfs:/var/cache/obuilder --fast-sync --allow-push ocurrentbuilder/staging,ocurrent/opam-staging --prune-threshold=30 --obuilder-prune-threshold=30 --capacity=1 --state-dir=/var/cache/obuilder/ocluster -v
+      # Prune thresholds = % free below which the worker prunes (higher = smaller
+      # cache). docker only needs a few base images, so cap it tight (80 -> ~10G of
+      # the 50G disk); the obuilder build cache is worth a bit more (65 -> ~17.5G).
+      # qcow2 + discard=unmap (run.sh) + discard mounts return the freed space to
+      # the host, so these caps bound real disk use. ~24-30 workers fit 1.5T.
+      ExecStart=/usr/local/bin/ocluster-worker -c /etc/ocluster/pool.cap --name=%H --obuilder-store=btrfs:/var/cache/obuilder --fast-sync --allow-push ocurrentbuilder/staging,ocurrent/opam-staging --prune-threshold=80 --obuilder-prune-threshold=65 --capacity=1 --state-dir=/var/cache/obuilder/ocluster -v
       Restart=always
       RestartSec=60
 
