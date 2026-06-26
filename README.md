@@ -153,8 +153,28 @@ The baked `ocluster-worker.service` runs:
 ocluster-worker -c /etc/ocluster/pool.cap --name=<name> \
   --obuilder-store=btrfs:/var/cache/obuilder --fast-sync \
   --allow-push ocurrentbuilder/staging,ocurrent/opam-staging \
-  --prune-threshold=30 --obuilder-prune-threshold=30 \
+  --prune-threshold=80 --obuilder-prune-threshold=65 \
   --capacity=1 --state-dir=/var/cache/obuilder/ocluster -v
+```
+
+The prune thresholds are `% free below which the worker prunes` — higher means a
+smaller cache. They bound each worker's disk: docker (`--prune-threshold=80`)
+caps ~10G since it only needs a few base images, and the obuilder build cache
+(`--obuilder-prune-threshold=65`) caps ~17.5G. Note both caches **grow to their
+cap** (docker keeps old weekly base images until pruned; it does not shrink on
+its own), so size the cap, not the expected use.
+
+## Disk-usage alert (`scratch-alert.sh`)
+
+`scratch-alert.sh` runs from a root cron on the worker host (`0 8 * * *`) and
+Slacks a warning if `/local/scratch` reaches 85%. It reads the webhook URL from
+a root-only file so no secret lives in the script or git:
+
+```sh
+echo 'https://hooks.slack.com/services/...' > /usr/local/etc/scratch-alert.url
+chmod 600 /usr/local/etc/scratch-alert.url
+install -m755 scratch-alert.sh /usr/local/bin/scratch-alert.sh
+( crontab -l 2>/dev/null; echo '0 8 * * * /usr/local/bin/scratch-alert.sh' ) | crontab -
 ```
 
 ## Caveats
