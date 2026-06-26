@@ -166,15 +166,16 @@ its own), so size the cap, not the expected use.
 
 ## Disk-usage alert (`scratch-alert.sh`)
 
-`scratch-alert.sh` runs from a root cron on the worker host (`0 8 * * *`) and
-Slacks a warning if `/local/scratch` reaches 85%. It reads the webhook URL from
-a root-only file so no secret lives in the script or git:
+`scratch-alert.sh` runs from a root cron on the worker host (hourly) and Slacks a
+warning **only** if `/local/scratch` reaches 85% — it exits silently below that,
+so there is no routine ping, just an alert when action is needed. It reads the
+webhook URL from a root-only file so no secret lives in the script or git:
 
 ```sh
 echo 'https://hooks.slack.com/services/...' > /usr/local/etc/scratch-alert.url
 chmod 600 /usr/local/etc/scratch-alert.url
 install -m755 scratch-alert.sh /usr/local/bin/scratch-alert.sh
-( crontab -l 2>/dev/null; echo '0 8 * * * /usr/local/bin/scratch-alert.sh' ) | crontab -
+( crontab -l 2>/dev/null; echo '0 * * * * /usr/local/bin/scratch-alert.sh' ) | crontab -
 ```
 
 ## Caveats
