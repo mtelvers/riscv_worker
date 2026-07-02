@@ -29,6 +29,13 @@ MEM=${MEM:-12G}
 SMP=${SMP:-4}
 QEMU=${QEMU:-qemu-system-riscv64}   # resolves to the QEMU 11 build in /usr/local via PATH
 PIN_CORES=${PIN_CORES:-}            # e.g. "4-63,68-127"; empty = no pinning / no NUMA bind
+# Disk cache mode. cache=unsafe: QEMU ignores the guest's fsync/flush, so vCPU
+# threads never stall waiting on a real disk flush. Measured ~20% more vCPU
+# utilisation during builds (3.06 vs 2.54 of 4 cores) vs the default writeback.
+# The tradeoff is a disk can corrupt on host power-loss -- fine here, these are
+# throwaway CI workers that recreate from base in seconds. Set CACHE=writeback
+# to opt back into durable flushes.
+CACHE=${CACHE:-unsafe}
 
 # Expand a "a-b,c,d-e" core list into space-separated integers.
 expand_list() {
@@ -135,9 +142,9 @@ start_vm() {
     nohup ${numa} ${QEMU} -cpu rva23s64 -m ${MEM} -smp ${SMP} -machine virt,acpi=off \
         -kernel /usr/lib/u-boot/qemu-riscv64_smode/uboot.elf \
         -display none -vnc :${vnc_display} -serial file:${name}-console.log \
-        -drive file=${name}.qcow2,if=virtio,discard=unmap \
-        -drive file=${name}-docker.qcow2,if=virtio,discard=unmap \
-        -drive file=${name}-obuilder.qcow2,if=virtio,discard=unmap \
+        -drive file=${name}.qcow2,if=virtio,discard=unmap,cache=${CACHE} \
+        -drive file=${name}-docker.qcow2,if=virtio,discard=unmap,cache=${CACHE} \
+        -drive file=${name}-obuilder.qcow2,if=virtio,discard=unmap,cache=${CACHE} \
         -device virtio-rng-pci \
         -netdev user,id=net0,hostfwd=tcp::${ssh_port}-:22 \
         -device virtio-net-device,netdev=net0 \
