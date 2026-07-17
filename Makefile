@@ -29,6 +29,14 @@ SMP         ?= 4
 QEMU         ?= qemu-system-riscv64
 QEMU_VERSION ?= 11.0.1
 
+# The distro u-boot-qemu (Ubuntu 22.04 ships 2022.01) boots plain `rva23s64` but
+# its FDT buffer is too small for a richer -cpu: `rva23s64,zkr=on` or `max` fail
+# in U-Boot with "initcall ... err=-28". `make uboot` cross-builds a current
+# U-Boot into /usr/local, which boots those fine. Only needed if you enable zkr
+# (e.g. for a mirage-crypto that requires the entropy CSR); plain rva23s64 does
+# not need it. See run.sh UBOOT= / CPU=.
+UBOOT_VERSION ?= v2026.07
+
 # The linux-riscv64 pool capability is read from a local, git-ignored file and
 # baked into the image. Create it once (the secrets/ directory is git-ignored):
 #   mkdir -p secrets && echo '<capnp://...pool cap...>' > secrets/linux-riscv64.cap
@@ -38,7 +46,7 @@ POOL_CAP    ?= $(shell cat $(CAP_FILE) 2>/dev/null)
 
 BASE_IMG    := $(RELEASE)-server-cloudimg-riscv64.img
 
-.PHONY: all base clean deps qemu
+.PHONY: all base clean deps qemu uboot
 
 all: $(NAME).qcow2
 
@@ -112,5 +120,22 @@ qemu:
 	cd qemu-$(QEMU_VERSION) && ./configure --target-list=riscv64-softmmu --prefix=/usr/local --enable-slirp && make -j$$(nproc) && sudo make install
 	qemu-system-riscv64 --version | head -1
 
+# Cross-build U-Boot $(UBOOT_VERSION) for the qemu-riscv64 S-mode target and
+# install it to /usr/local/lib/u-boot/qemu-riscv64_smode/uboot.elf. Point run.sh
+# at it with UBOOT=/usr/local/lib/u-boot/qemu-riscv64_smode/uboot.elf. Fixes the
+# distro U-Boot's err=-28 with -cpu rva23s64,zkr=on / max. Host may be x86_64 or
+# arm64; we cross-compile with riscv64-linux-gnu-.
+uboot:
+	sudo apt-get update
+	sudo DEBIAN_FRONTEND=noninteractive apt-get install -y git build-essential gcc-riscv64-linux-gnu bison flex libssl-dev swig python3-dev python3-setuptools device-tree-compiler bc libgnutls28-dev uuid-dev
+	rm -rf u-boot-src
+	git clone --depth 1 --branch $(UBOOT_VERSION) https://github.com/u-boot/u-boot.git u-boot-src
+	cd u-boot-src && make qemu-riscv64_smode_defconfig && make CROSS_COMPILE=riscv64-linux-gnu- -j$$(nproc)
+	sudo install -D -m644 u-boot-src/u-boot /usr/local/lib/u-boot/qemu-riscv64_smode/uboot.elf
+	rm -rf u-boot-src
+	@echo "installed U-Boot $(UBOOT_VERSION) -> /usr/local/lib/u-boot/qemu-riscv64_smode/uboot.elf"
+	@echo "use it with: UBOOT=/usr/local/lib/u-boot/qemu-riscv64_smode/uboot.elf CPU=rva23s64,zkr=on ./run.sh"
+
 clean:
 	rm -f *.qcow2 seed-*.iso user-data-*.yaml *.log
+	rm -rf u-boot-src qemu-$(QEMU_VERSION) qemu-$(QEMU_VERSION).tar.xz

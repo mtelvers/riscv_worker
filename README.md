@@ -53,7 +53,14 @@ the sum of all workers comfortably under the host volume — e.g. ~24 workers on
 ```sh
 make deps        # m4, cloud-image-utils, qemu-utils, u-boot-qemu
 make qemu        # build + install QEMU 11 into /usr/local (see below)
+make uboot       # optional: build a current U-Boot; only needed for CPU=...,zkr=on / max
 ```
+
+**`make uboot` (optional).** The distro U-Boot (Ubuntu 22.04 ships 2022.01) boots
+plain `rva23s64`, but its FDT buffer is too small for a richer CPU — `-cpu
+rva23s64,zkr=on` or `-cpu max` fail in U-Boot with `initcall ... err=-28`. `make
+uboot` cross-builds a current U-Boot (v2026.07) into `/usr/local`, which boots
+those fine. Then run workers with it via `UBOOT=/usr/local/lib/u-boot/qemu-riscv64_smode/uboot.elf CPU=rva23s64,zkr=on ./run.sh`. Not needed for normal use.
 
 **Why `make qemu`?** Ubuntu 26.04 (`resolute`) requires the RVA23 profile
 (`-cpu rva23s64`), which the distro QEMU (8.2) does not provide. It only has

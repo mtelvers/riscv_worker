@@ -36,6 +36,16 @@ PIN_CORES=${PIN_CORES:-}            # e.g. "4-63,68-127"; empty = no pinning / n
 # throwaway CI workers that recreate from base in seconds. Set CACHE=writeback
 # to opt back into durable flushes.
 CACHE=${CACHE:-unsafe}
+# Emulated CPU model. rva23s64 is the RVA23 profile Ubuntu 26.04 targets. `max`
+# is a superset (all extensions QEMU implements, incl. Zkr) at ~no TCG cost for
+# unused ones; use CPU=max to future-proof against tools that require Zkr (e.g.
+# a mirage-crypto that mandates the entropy CSR). Native hardware has no such
+# escape hatch.
+CPU=${CPU:-rva23s64}
+# U-Boot (S-mode) firmware image passed to -kernel. Default is the distro one
+# (Ubuntu u-boot-qemu); it boots plain rva23s64 but fails a richer -cpu with
+# err=-28. Point at the `make uboot` build to use CPU=rva23s64,zkr=on or max.
+UBOOT=${UBOOT:-/usr/lib/u-boot/qemu-riscv64_smode/uboot.elf}
 
 # Expand a "a-b,c,d-e" core list into space-separated integers.
 expand_list() {
@@ -139,8 +149,8 @@ start_vm() {
     fi
 
     echo "${name}: starting (ssh=${ssh_port} vnc=:${vnc_display})"
-    nohup ${numa} ${QEMU} -cpu rva23s64 -m ${MEM} -smp ${SMP} -machine virt,acpi=off \
-        -kernel /usr/lib/u-boot/qemu-riscv64_smode/uboot.elf \
+    nohup ${numa} ${QEMU} -cpu ${CPU} -m ${MEM} -smp ${SMP} -machine virt,acpi=off \
+        -kernel ${UBOOT} \
         -display none -vnc :${vnc_display} -serial file:${name}-console.log \
         -drive file=${name}.qcow2,if=virtio,discard=unmap,cache=${CACHE} \
         -drive file=${name}-docker.qcow2,if=virtio,discard=unmap,cache=${CACHE} \
